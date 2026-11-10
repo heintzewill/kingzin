@@ -1,0 +1,64 @@
+name: Compilar NEXUS OS ULTRA (ZIP)
+
+# Compila o projeto a partir do ZIP enviado na raiz do repositório.
+# Roda sozinho quando um .zip é enviado, ou manualmente em Actions → Run workflow.
+on:
+  workflow_dispatch:
+  push:
+    paths: [ '*.zip' ]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Descompactar o projeto
+        run: |
+          ZIP=$(ls *.zip | head -1)
+          if [ -z "$ZIP" ]; then echo "::error::Nenhum .zip na raiz do repositório"; exit 1; fi
+          echo "ZIP encontrado: $ZIP"
+          unzip -q "$ZIP" -d unpacked
+          PROJ=$(dirname "$(find unpacked -maxdepth 3 -name settings.gradle | head -1)")
+          if [ "$PROJ" = "." ]; then echo "::error::settings.gradle não encontrado dentro do ZIP"; exit 1; fi
+          chmod +x "$PROJ/gradlew"
+          echo "PROJ=$PROJ" >> "$GITHUB_ENV"
+
+      - name: Android SDK 36
+        run: sdkmanager --install "platforms;android-36" "build-tools;35.0.0" > /dev/null
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Testes unitários
+        run: cd "$PROJ" && ./gradlew --no-daemon test
+
+      - name: Compilar APK debug
+        run: cd "$PROJ" && ./gradlew --no-daemon :app:assembleDebug
+
+      - name: Publicar APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: NexusOSUltra-APK-debug
+          path: ${{ env.PROJ }}/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+
+      - name: Publicar relatórios (se falhar)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: NexusOSUltra-relatorios
+          path: |
+            ${{ env.PROJ }}/app/build/reports/
+            ${{ env.PROJ }}/core/*/build/reports/
+          if-no-files-found: ignore
